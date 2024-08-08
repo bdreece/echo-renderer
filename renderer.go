@@ -1,3 +1,4 @@
+// Package echorenderer provides an implementation of [echo.Renderer] using [html/template].
 package echorenderer
 
 import (
@@ -15,19 +16,18 @@ type FuncMapper func(c echo.Context) template.FuncMap
 type Renderer struct {
 	*template.Template
 
-	fsys    fs.FS
-	pattern string
-	mapper  FuncMapper
+	fsys  fs.FS
+	funcs FuncMapper
 }
 
 // Provides configuration for [Renderer].
 type Options struct {
 	// An [fs.FS] that contains the templates.
 	FS fs.FS
-	// The glob pattern used in [template.Parse].
-	Pattern string
+	// The glob patterns used in [template.Parse].
+	Include []string
 	// An optional [FuncMapper].
-	FuncMapper FuncMapper
+	Funcs FuncMapper
 }
 
 // Render implements [echo.Renderer].
@@ -37,9 +37,8 @@ func (r *Renderer) Render(w io.Writer, name string, data any, c echo.Context) er
 		return err
 	}
 
-	_, err = tmpl.
-		Funcs(r.mapper(c)).
-		ParseFS(r.fsys, name)
+	_ = tmpl.Funcs(r.funcs(c))
+	_, err = tmpl.ParseFS(r.fsys, name)
 
 	if err != nil {
 		return err
@@ -50,19 +49,18 @@ func (r *Renderer) Render(w io.Writer, name string, data any, c echo.Context) er
 
 // Creates a new [Renderer].
 func New(opts *Options) (*Renderer, error) {
-	tmpl, err := template.New("").
-		Funcs(opts.FuncMapper(nil)).
-		ParseFS(opts.FS, opts.Pattern)
-
-	if err != nil {
-		return nil, err
+	tmpl := template.New("").Funcs(opts.Funcs(nil))
+	for _, pattern := range opts.Include {
+		_, err := tmpl.ParseFS(opts.FS, pattern)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	return &Renderer{
 		Template: tmpl,
 		fsys:     opts.FS,
-		pattern:  opts.Pattern,
-		mapper:   opts.FuncMapper,
+		funcs:    opts.Funcs,
 	}, nil
 
 }
