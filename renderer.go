@@ -2,6 +2,7 @@
 package echorenderer
 
 import (
+	"errors"
 	"html/template"
 	"io"
 	"io/fs"
@@ -9,35 +10,45 @@ import (
 	"github.com/labstack/echo/v4"
 )
 
-// Creates a [template.FuncMap] using an [echo.Context].
-type FuncMapper func(c echo.Context) template.FuncMap
+type (
+	// Creates a [template.FuncMap] using an [echo.Context].
+	FuncMapper func(c echo.Context) template.FuncMap
 
-// Provides [echo.Renderer] implementation through [template.Template].
-type Renderer struct {
-	*template.Template
+	// Provides configuration for [Renderer].
+	Options struct {
+		// An [fs.FS] that contains the templates.
+		FS fs.FS
+		// The glob patterns used in [template.Parse].
+		Include []string
+		// An optional [FuncMapper].
+		Funcs FuncMapper
+	}
 
-	fsys  fs.FS
-	funcs FuncMapper
-}
+	// Provides [echo.Renderer] implementation through [template.Template].
+	Renderer struct {
+        *template.Template
 
-// Provides configuration for [Renderer].
-type Options struct {
-	// An [fs.FS] that contains the templates.
-	FS fs.FS
-	// The glob patterns used in [template.Parse].
-	Include []string
-	// An optional [FuncMapper].
-	Funcs FuncMapper
-}
+		fsys  fs.FS
+		funcs FuncMapper
+	}
+)
+
+var (
+    ErrNoInclude = errors.New("echorenderer: must have at least one include pattern")
+    ErrNoFS = errors.New("echorenderer: must have filesystem")
+)
 
 // Render implements [echo.Renderer].
 func (r *Renderer) Render(w io.Writer, name string, data any, c echo.Context) error {
-	tmpl, err := r.Template.Clone()
+	tmpl, err := r.Clone()
 	if err != nil {
 		return err
 	}
 
-	_ = tmpl.Funcs(r.funcs(c))
+	if r.funcs != nil {
+		_ = tmpl.Funcs(r.funcs(c))
+	}
+
 	_, err = tmpl.ParseFS(r.fsys, name)
 
 	if err != nil {
@@ -49,7 +60,19 @@ func (r *Renderer) Render(w io.Writer, name string, data any, c echo.Context) er
 
 // Creates a new [Renderer].
 func New(opts *Options) (*Renderer, error) {
-	tmpl := template.New("").Funcs(opts.Funcs(nil))
+    if opts.FS == nil {
+        return nil, ErrNoFS
+    }
+
+	if opts.Include == nil || len(opts.Include) == 0 {
+		return nil, ErrNoInclude
+	}
+
+	tmpl := template.New("")
+	if opts.Funcs != nil {
+		_ = tmpl.Funcs(opts.Funcs(nil))
+	}
+
 	for _, pattern := range opts.Include {
 		_, err := tmpl.ParseFS(opts.FS, pattern)
 		if err != nil {
